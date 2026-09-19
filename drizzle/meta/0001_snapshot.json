@@ -173,8 +173,8 @@
       "uniqueConstraints": {},
       "policies": {},
       "checkConstraints": {
-        "books_total_copies_positive": {
-          "name": "books_total_copies_positive",
+        "books_total_copies_non_negative": {
+          "name": "books_total_copies_non_negative",
           "value": "\"books\".\"total_copies\" >= 0"
         },
         "books_available_copies_non_negative": {

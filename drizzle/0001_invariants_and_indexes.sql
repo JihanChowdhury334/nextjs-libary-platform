@@ -33,7 +33,7 @@ CREATE INDEX "borrowings_user_status_idx" ON "borrowings" USING btree ("user_id"
 CREATE INDEX "borrowings_book_status_idx" ON "borrowings" USING btree ("book_id","status");--> statement-breakpoint
 CREATE INDEX "fines_user_unpaid_idx" ON "fines" USING btree ("user_id","is_paid");--> statement-breakpoint
 CREATE INDEX "reservations_user_status_idx" ON "reservations" USING btree ("user_id","status");--> statement-breakpoint
-ALTER TABLE "books" ADD CONSTRAINT "books_total_copies_positive" CHECK ("books"."total_copies" >= 0);--> statement-breakpoint
+ALTER TABLE "books" ADD CONSTRAINT "books_total_copies_non_negative" CHECK ("books"."total_copies" >= 0);--> statement-breakpoint
 ALTER TABLE "books" ADD CONSTRAINT "books_available_copies_non_negative" CHECK ("books"."available_copies" >= 0);--> statement-breakpoint
 ALTER TABLE "books" ADD CONSTRAINT "books_available_lte_total" CHECK ("books"."available_copies" <= "books"."total_copies");--> statement-breakpoint
 ALTER TABLE "borrowings" ADD CONSTRAINT "borrowings_status_valid" CHECK ("borrowings"."status" in ('borrowed', 'returned'));--> statement-breakpoint

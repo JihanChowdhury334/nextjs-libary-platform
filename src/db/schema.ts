@@ -66,7 +66,7 @@ export const books = pgTable(
   (t) => [
     // Inventory invariants. The borrow path relies on these: a conditional
     // UPDATE is the first line of defence, these are the last.
-    check("books_total_copies_positive", sql`${t.totalCopies} >= 0`),
+    check("books_total_copies_non_negative", sql`${t.totalCopies} >= 0`),
     check("books_available_copies_non_negative", sql`${t.availableCopies} >= 0`),
     check("books_available_lte_total", sql`${t.availableCopies} <= ${t.totalCopies}`),
     // Supports the browse query: filter on is_active (+ optional category),
