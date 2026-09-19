@@ -1,111 +1,71 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { eq } from "drizzle-orm";
 import { db } from "@/db";
-import { books } from "@/db/schema";
-
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    
-    const {
-      title,
-      author,
-      isbn,
-      publisher,
-      publicationYear,
-      description,
-      totalCopies,
-      availableCopies,
-      location,
-      categoryId,
-    } = body;
-
-    // Validate required fields
-    if (!title || !author) {
-      return NextResponse.json(
-        { error: "Title and author are required" },
-        { status: 400 }
-      );
-    }
-
-    // Create the book
-    const newBook = await db.insert(books).values({
-      title,
-      author,
-      isbn: isbn || null,
-      publisher: publisher || null,
-      publicationYear: publicationYear || null,
-      description: description || null,
-      totalCopies: totalCopies || 1,
-      availableCopies: availableCopies || totalCopies || 1,
-      location: location || null,
-      categoryId: categoryId || null,
-      isActive: true,
-    }).returning();
-
-    return NextResponse.json(
-      { message: "Book created successfully", book: newBook[0] },
-      { status: 201 }
-    );
-  } catch (error) {
-    console.error("Error creating book:", error);
-    return NextResponse.json(
-      { error: "Failed to create book" },
-      { status: 500 }
-    );
-  }
-}
+import { books, categories } from "@/db/schema";
+import { currentUser, hasRole, STAFF_ROLES } from "@/lib/auth";
+import { browseBooks } from "@/lib/books";
+import { parseBookQuery, parseNewBook } from "@/lib/validation";
+import { badRequest, forbidden, ok, readJson, serverError, unauthorized } from "@/lib/api";
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const page = parseInt(searchParams.get("page") || "1");
-    const limit = parseInt(searchParams.get("limit") || "10");
-    const search = searchParams.get("search") || "";
-    const category = searchParams.get("category") || "";
+    const query = parseBookQuery(new URL(request.url).searchParams);
+    return ok(await browseBooks(query));
+  } catch (error) {
+    return serverError("GET /api/books", error);
+  }
+}
 
-    let query = db.select().from(books);
+export async function POST(request: NextRequest) {
+  try {
+    // Adding to the catalogue is a staff action. The navbar hides the link for
+    // everyone else, but the check that matters is this one.
+    const user = await currentUser();
+    if (!user) return unauthorized();
+    if (!hasRole(user, STAFF_ROLES)) return forbidden();
 
-    // Apply filters
-    if (search) {
-      query = query.where(
-        // This would need to be implemented with proper SQL conditions
-        // For now, we'll get all books and filter in the application
-      );
+    const body = await readJson(request);
+    if (!body.ok) return body.response;
+
+    const parsed = parseNewBook(body.value);
+    if (!parsed.ok) return badRequest("Invalid book details.", parsed.errors);
+
+    const input = parsed.value;
+
+    if (input.categoryId !== null) {
+      const category = await db
+        .select({ id: categories.id })
+        .from(categories)
+        .where(eq(categories.id, input.categoryId))
+        .limit(1);
+      if (category.length === 0) {
+        return badRequest("Invalid book details.", {
+          categoryId: "No such category.",
+        });
+      }
     }
 
-    const allBooks = await query;
-    
-    // Apply search filter
-    const filteredBooks = search 
-      ? allBooks.filter(book => 
-          book.title.toLowerCase().includes(search.toLowerCase()) ||
-          book.author.toLowerCase().includes(search.toLowerCase()) ||
-          (book.isbn && book.isbn.toLowerCase().includes(search.toLowerCase()))
-        )
-      : allBooks;
+    // A new book starts fully on the shelf: availableCopies is derived, never
+    // taken from the client, so it cannot be set above totalCopies.
+    const [created] = await db
+      .insert(books)
+      .values({
+        title: input.title,
+        author: input.author,
+        isbn: input.isbn,
+        publisher: input.publisher,
+        publicationYear: input.publicationYear,
+        description: input.description,
+        location: input.location,
+        categoryId: input.categoryId,
+        totalCopies: input.totalCopies,
+        availableCopies: input.totalCopies,
+        isActive: true,
+      })
+      .returning();
 
-    // Apply category filter
-    const categoryFilteredBooks = category
-      ? filteredBooks.filter(book => book.categoryId === parseInt(category))
-      : filteredBooks;
-
-    // Pagination
-    const startIndex = (page - 1) * limit;
-    const endIndex = startIndex + limit;
-    const paginatedBooks = categoryFilteredBooks.slice(startIndex, endIndex);
-
-    return NextResponse.json({
-      books: paginatedBooks,
-      total: categoryFilteredBooks.length,
-      page,
-      limit,
-      totalPages: Math.ceil(categoryFilteredBooks.length / limit),
-    });
+    return ok({ book: created }, 201);
   } catch (error) {
-    console.error("Error fetching books:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch books" },
-      { status: 500 }
-    );
+    return serverError("POST /api/books", error);
   }
 }

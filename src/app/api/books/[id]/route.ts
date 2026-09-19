@@ -1,40 +1,33 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { books, categories } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { toPositiveInt } from "@/lib/validation";
+import { badRequest, notFound, ok, serverError } from "@/lib/api";
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { id: string } }
-) {
+// Next.js 15 passes dynamic params as a Promise.
+type RouteContext = { params: Promise<{ id: string }> };
+
+export async function GET(_request: NextRequest, { params }: RouteContext) {
   try {
-    const bookId = parseInt(params.id);
-    
-    if (isNaN(bookId)) {
-      return NextResponse.json({ error: "Invalid book ID" }, { status: 400 });
-    }
+    const { id } = await params;
+    const bookId = toPositiveInt(id);
+    if (bookId === null) return badRequest("Book id must be a positive integer.");
 
-    const book = await db.select().from(books).where(eq(books.id, bookId)).limit(1);
-    
-    if (book.length === 0) {
-      return NextResponse.json({ error: "Book not found" }, { status: 404 });
-    }
+    const rows = await db
+      .select({
+        book: books,
+        category: categories,
+      })
+      .from(books)
+      .leftJoin(categories, eq(books.categoryId, categories.id))
+      .where(and(eq(books.id, bookId), eq(books.isActive, true)))
+      .limit(1);
 
-    const bookData = book[0];
-    const category = bookData.categoryId 
-      ? await db.select().from(categories).where(eq(categories.id, bookData.categoryId)).limit(1)
-      : null;
+    if (rows.length === 0) return notFound("Book");
 
-    return NextResponse.json({
-      book: bookData,
-      category: category?.[0] || null
-    });
-
+    return ok({ book: rows[0].book, category: rows[0].category });
   } catch (error) {
-    console.error("Error fetching book:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch book" },
-      { status: 500 }
-    );
+    return serverError("GET /api/books/[id]", error);
   }
 }

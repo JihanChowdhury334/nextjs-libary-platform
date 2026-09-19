@@ -1,25 +1,40 @@
+import { NextRequest } from "next/server";
+import bcrypt from "bcrypt";
 import { db } from "@/db";
 import { users } from "@/db/schema";
-import bcrypt from "bcrypt";
+import { parseSignup } from "@/lib/validation";
+import { badRequest, fail, ok, readJson, serverError } from "@/lib/api";
+import { isUniqueViolation } from "@/lib/db-errors";
 
-export async function POST(req: Request) {
+const BCRYPT_ROUNDS = 12;
+
+export async function POST(request: NextRequest) {
   try {
-    const { name, email, password } = await req.json();
+    const body = await readJson(request);
+    if (!body.ok) return body.response;
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const parsed = parseSignup(body.value);
+    if (!parsed.ok) return badRequest("Invalid signup details.", parsed.errors);
 
-    await db.insert(users).values({
-      name,
-      email,
-      password: hashedPassword,
-    });
+    const { name, email, password } = parsed.value;
+    const hashed = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
-    return Response.json({ message: "Signup successful!" });
+    try {
+      // Role is fixed server-side. Self-service signup can never mint staff;
+      // promoting an account is a database operation, by design.
+      const [created] = await db
+        .insert(users)
+        .values({ name, email, password: hashed, role: "student" })
+        .returning({ id: users.id, name: users.name, email: users.email });
+
+      return ok({ user: created }, 201);
+    } catch (error) {
+      if (isUniqueViolation(error, "users_email_unique")) {
+        return fail(409, "email_taken", "An account with that email already exists.");
+      }
+      throw error;
+    }
   } catch (error) {
-    console.error("Error during signup:", error);
-    return Response.json(
-      { message: "Signup failed. Please try again." },
-      { status: 500 }
-    );
+    return serverError("POST /api/signup", error);
   }
 }

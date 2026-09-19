@@ -1,5 +1,5 @@
 {
-  "name": "my-app2",
+  "name": "library-platform",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -9,7 +9,11 @@
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import ./tests/alias-loader.mjs --test 'tests/**/*.test.ts'",
+    "db:seed": "node --import ./tests/alias-loader.mjs scripts/seed.ts",
+    "db:benchmark": "node --import ./tests/alias-loader.mjs scripts/benchmark-browse.ts"
   },
   "dependencies": {
     "@auth/drizzle-adapter": "^1.10.0",

@@ -1,196 +1,103 @@
-import { db } from "@/db";
-import { books, users, borrowings, categories } from "@/db/schema";
-import { eq, sql } from "drizzle-orm";
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { and, count, eq, lt, sql } from "drizzle-orm";
+import { db } from "@/db";
+import { books, borrowings, categories, users } from "@/db/schema";
+import { currentUser, hasRole, STAFF_ROLES } from "@/lib/auth";
+import { StatCard } from "@/components/StatCard";
 
-// Cache this page for 30 seconds
-export const revalidate = 30;
+export const metadata = { title: "Admin" };
+export const dynamic = "force-dynamic";
 
-export default async function AdminDashboard() {
-  // Get all data for dashboard
-  const [allBooks, allUsers, allBorrowings, allCategories] = await Promise.all([
-    db.select().from(books),
-    db.select().from(users),
-    db.select().from(borrowings),
-    db.select().from(categories),
+async function stats() {
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Previously this page pulled every row of four tables into memory and
+  // counted them in JavaScript. Postgres does the counting now.
+  const [catalogue] = await db
+    .select({
+      titles: sql<number>`count(*)::int`,
+      copies: sql<number>`coalesce(sum(${books.totalCopies}), 0)::int`,
+      onLoan: sql<number>`coalesce(sum(${books.totalCopies} - ${books.availableCopies}), 0)::int`,
+      withdrawn: sql<number>`count(*) filter (where not ${books.isActive})::int`,
+    })
+    .from(books);
+
+  const [[people], [categoryCount], [activeLoans], [overdueLoans]] = await Promise.all([
+    db.select({ n: count() }).from(users),
+    db.select({ n: count() }).from(categories),
+    db.select({ n: count() }).from(borrowings).where(eq(borrowings.status, "borrowed")),
+    db
+      .select({ n: count() })
+      .from(borrowings)
+      .where(and(eq(borrowings.status, "borrowed"), lt(borrowings.dueDate, today))),
   ]);
 
-  // Calculate statistics
-  const totalBooks = allBooks.length;
-  const availableBooks = allBooks.filter(b => (b.availableCopies || 0) > 0).length;
-  const borrowedBooks = allBooks.filter(b => (b.availableCopies || 0) === 0).length;
-  const totalUsers = allUsers.length;
-  const activeBorrowings = allBorrowings.filter(b => b.status === 'borrowed').length;
-  const overdueBorrowings = allBorrowings.filter(b => {
-    if (!b.dueDate) return false;
-    return new Date(b.dueDate) < new Date() && b.status === 'borrowed';
-  }).length;
+  return {
+    ...catalogue,
+    users: people.n,
+    categories: categoryCount.n,
+    activeLoans: activeLoans.n,
+    overdueLoans: overdueLoans.n,
+  };
+}
+
+export default async function AdminPage() {
+  // This page had no access check at all: anyone who typed /admin saw the
+  // library's user count and loan figures.
+  const user = await currentUser();
+  if (!user) redirect("/signin?callbackUrl=/admin");
+  if (!hasRole(user, STAFF_ROLES)) redirect("/books");
+
+  const s = await stats();
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-indigo-50">
-      <div className="container mx-auto px-8 py-12">
-        {/* Header */}
-        <div className="mb-12">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
-            <div>
-              <h1 className="text-4xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent mb-3">
-                Admin Dashboard
-              </h1>
-              <p className="text-lg text-gray-600">
-                Manage your library system
-              </p>
-            </div>
-            
-            <div className="flex gap-4">
-              <Link
-                href="/books/new"
-                className="group bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-6 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center gap-2"
-              >
-                <span className="text-lg">➕</span>
-                Add Book
-              </Link>
-              <Link
-                href="/books"
-                className="group bg-gradient-to-r from-emerald-500 to-teal-600 text-white px-6 py-3 rounded-xl font-semibold shadow-lg hover:shadow-xl transform hover:scale-105 transition-all duration-300 flex items-center gap-2"
-              >
-                <span className="text-lg">📚</span>
-                View Books
-              </Link>
-            </div>
+    <div className="page-shell">
+      <div className="page-glow" aria-hidden="true" />
+      <div className="page-body flex flex-col gap-8">
+        <header className="flex flex-wrap items-end justify-between gap-4">
+          <div className="flex flex-col gap-2">
+            <p className="eyebrow">Staff</p>
+            <h1 className="heading-1">Admin</h1>
+            <p className="text-lead">Collection and circulation at a glance.</p>
           </div>
-        </div>
-
-        {/* Statistics Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
-          <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/20">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-gradient-to-r from-emerald-500 to-teal-500 rounded-xl flex items-center justify-center text-white text-xl">
-                📚
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-gray-800">{totalBooks}</p>
-                <p className="text-gray-600">Total Books</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/20">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-gradient-to-r from-green-500 to-emerald-500 rounded-xl flex items-center justify-center text-white text-xl">
-                ✅
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-gray-800">{availableBooks}</p>
-                <p className="text-gray-600">Available</p>
-              </div>
-            </div>
-          </div>
-          
-          <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/20">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-gradient-to-r from-orange-500 to-red-500 rounded-xl flex items-center justify-center text-white text-xl">
-                📖
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-gray-800">{borrowedBooks}</p>
-                <p className="text-gray-600">Borrowed</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/20">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-gradient-to-r from-purple-500 to-indigo-500 rounded-xl flex items-center justify-center text-white text-xl">
-                👥
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-gray-800">{totalUsers}</p>
-                <p className="text-gray-600">Users</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Additional Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-12">
-          <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/20">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-gradient-to-r from-blue-500 to-cyan-500 rounded-xl flex items-center justify-center text-white text-xl">
-                📋
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-gray-800">{activeBorrowings}</p>
-                <p className="text-gray-600">Active Loans</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/20">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-gradient-to-r from-red-500 to-pink-500 rounded-xl flex items-center justify-center text-white text-xl">
-                ⚠️
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-gray-800">{overdueBorrowings}</p>
-                <p className="text-gray-600">Overdue</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white/70 backdrop-blur-sm rounded-2xl p-6 shadow-lg border border-white/20">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-gradient-to-r from-yellow-500 to-orange-500 rounded-xl flex items-center justify-center text-white text-xl">
-                🏷️
-              </div>
-              <div>
-                <p className="text-2xl font-bold text-gray-800">{allCategories.length}</p>
-                <p className="text-gray-600">Categories</p>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          <Link
-            href="/admin/books"
-            className="group bg-white/70 backdrop-blur-sm rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20 hover:scale-105"
-          >
-            <div className="text-center">
-              <div className="w-16 h-16 bg-gradient-to-r from-indigo-500 to-purple-500 rounded-2xl flex items-center justify-center text-white text-2xl mx-auto mb-4 group-hover:scale-110 transition-transform duration-300">
-                📚
-              </div>
-              <h3 className="text-xl font-semibold text-gray-800 mb-2">Manage Books</h3>
-              <p className="text-gray-600">Add, edit, and manage your book collection</p>
-            </div>
+          <Link href="/books/new" className="btn btn-primary">
+            Add a book
           </Link>
+        </header>
 
-          <Link
-            href="/admin/users"
-            className="group bg-white/70 backdrop-blur-sm rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20 hover:scale-105"
-          >
-            <div className="text-center">
-              <div className="w-16 h-16 bg-gradient-to-r from-emerald-500 to-teal-500 rounded-2xl flex items-center justify-center text-white text-2xl mx-auto mb-4 group-hover:scale-110 transition-transform duration-300">
-                👥
-              </div>
-              <h3 className="text-xl font-semibold text-gray-800 mb-2">Manage Users</h3>
-              <p className="text-gray-600">View and manage user accounts and permissions</p>
-            </div>
-          </Link>
+        <section aria-labelledby="collection-heading" className="flex flex-col gap-4">
+          <h2 id="collection-heading" className="heading-2">
+            Collection
+          </h2>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatCard label="Titles" value={s.titles.toLocaleString()} />
+            <StatCard label="Copies" value={s.copies.toLocaleString()} />
+            <StatCard label="Categories" value={s.categories.toLocaleString()} />
+            <StatCard
+              label="Withdrawn"
+              value={s.withdrawn.toLocaleString()}
+              hint="not shown in the catalogue"
+            />
+          </div>
+        </section>
 
-          <Link
-            href="/admin/borrowings"
-            className="group bg-white/70 backdrop-blur-sm rounded-2xl p-8 shadow-lg hover:shadow-xl transition-all duration-300 border border-white/20 hover:scale-105"
-          >
-            <div className="text-center">
-              <div className="w-16 h-16 bg-gradient-to-r from-orange-500 to-red-500 rounded-2xl flex items-center justify-center text-white text-2xl mx-auto mb-4 group-hover:scale-110 transition-transform duration-300">
-                📋
-              </div>
-              <h3 className="text-xl font-semibold text-gray-800 mb-2">Borrowing Records</h3>
-              <p className="text-gray-600">Track all book loans and returns</p>
-            </div>
-          </Link>
-        </div>
+        <section aria-labelledby="circulation-heading" className="flex flex-col gap-4">
+          <h2 id="circulation-heading" className="heading-2">
+            Circulation
+          </h2>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <StatCard label="Active loans" value={s.activeLoans.toLocaleString()} />
+            <StatCard label="Overdue" value={s.overdueLoans.toLocaleString()} />
+            <StatCard label="Copies out" value={s.onLoan.toLocaleString()} />
+            <StatCard label="Registered users" value={s.users.toLocaleString()} />
+          </div>
+        </section>
+
+        <p className="text-subtle text-[length:var(--text-small)]">
+          Editing books, managing users and browsing loan history are not built
+          yet. Signed in as {user.email} ({user.role}).
+        </p>
       </div>
     </div>
   );

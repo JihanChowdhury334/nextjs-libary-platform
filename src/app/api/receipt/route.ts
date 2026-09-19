@@ -1,57 +1,55 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { borrowings, books, users } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { currentUser } from "@/lib/auth";
+import { toPositiveInt } from "@/lib/validation";
+import { badRequest, notFound, ok, serverError, unauthorized } from "@/lib/api";
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const borrowingId = searchParams.get("id");
+    // Previously this route took any borrowing id and returned the borrower's
+    // name and email. It is now scoped to the caller's own loans.
+    const user = await currentUser();
+    if (!user) return unauthorized();
 
-    if (!borrowingId) {
-      return NextResponse.json({ error: "Borrowing ID is required" }, { status: 400 });
-    }
+    const borrowingId = toPositiveInt(new URL(request.url).searchParams.get("id") ?? "");
+    if (borrowingId === null) return badRequest("Loan id must be a positive integer.");
 
-    // Get borrowing details with book and user info
-    const borrowingData = await db
+    const rows = await db
       .select({
         id: borrowings.id,
         borrowedAt: borrowings.borrowedAt,
         dueDate: borrowings.dueDate,
-        book: {
-          title: books.title,
-          author: books.author,
-          isbn: books.isbn,
-        },
-        user: {
-          name: users.name,
-          email: users.email,
-        }
+        returnedAt: borrowings.returnedAt,
+        status: borrowings.status,
+        title: books.title,
+        author: books.author,
+        isbn: books.isbn,
+        borrowerName: users.name,
+        borrowerEmail: users.email,
       })
       .from(borrowings)
       .innerJoin(books, eq(borrowings.bookId, books.id))
       .innerJoin(users, eq(borrowings.userId, users.id))
-      .where(eq(borrowings.id, parseInt(borrowingId)))
+      .where(and(eq(borrowings.id, borrowingId), eq(borrowings.userId, user.id)))
       .limit(1);
 
-    if (borrowingData.length === 0) {
-      return NextResponse.json({ error: "Borrowing record not found" }, { status: 404 });
-    }
+    if (rows.length === 0) return notFound("Loan");
 
-    const borrowing = borrowingData[0];
-
-    // Return borrowing details as JSON (PDF generation can be added later)
-    return NextResponse.json({
-      message: "Borrowing receipt data",
-      borrowing: borrowing,
-      note: "PDF generation feature coming soon!"
+    const r = rows[0];
+    return ok({
+      receipt: {
+        loanId: r.id,
+        borrowedAt: r.borrowedAt,
+        dueDate: r.dueDate,
+        returnedAt: r.returnedAt,
+        status: r.status,
+        book: { title: r.title, author: r.author, isbn: r.isbn },
+        borrower: { name: r.borrowerName, email: r.borrowerEmail },
+      },
     });
-
   } catch (error) {
-    console.error("Error fetching borrowing details:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch borrowing details" },
-      { status: 500 }
-    );
+    return serverError("GET /api/receipt", error);
   }
 }

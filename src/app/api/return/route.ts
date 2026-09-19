@@ -1,66 +1,36 @@
-import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "../auth/[...nextauth]/route";
-import { db } from "@/db";
-import { books, borrowings } from "@/db/schema";
-import { eq, and } from "drizzle-orm";
+import { NextRequest } from "next/server";
+import { currentUser } from "@/lib/auth";
+import { returnBook } from "@/lib/loans";
+import { parseReturn } from "@/lib/validation";
+import { badRequest, fail, notFound, ok, readJson, serverError, unauthorized } from "@/lib/api";
 
 export async function POST(request: NextRequest) {
   try {
-    const session = await getServerSession(authOptions);
-    
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    const user = await currentUser();
+    if (!user) return unauthorized();
+
+    const body = await readJson(request);
+    if (!body.ok) return body.response;
+
+    const parsed = parseReturn(body.value);
+    if (!parsed.ok) return badRequest("Invalid return request.", parsed.errors);
+
+    const result = await returnBook(user.id, parsed.value.borrowingId);
+
+    if (result.ok) {
+      return ok({
+        borrowingId: result.borrowingId,
+        bookId: result.bookId,
+        availableCopies: result.availableCopies,
+      });
     }
 
-    const { borrowingId } = await request.json();
-    
-    if (!borrowingId) {
-      return NextResponse.json({ error: "Borrowing ID required" }, { status: 400 });
-    }
-
-    // Check if borrowing exists and belongs to user
-    const borrowing = await db.select()
-      .from(borrowings)
-      .where(and(
-        eq(borrowings.id, borrowingId),
-        eq(borrowings.userId, parseInt(session.user.id)),
-        eq(borrowings.status, "borrowed")
-      ))
-      .limit(1);
-
-    if (borrowing.length === 0) {
-      return NextResponse.json({ error: "Borrowing not found" }, { status: 404 });
-    }
-
-    // Update borrowing status
-    await db.update(borrowings)
-      .set({ 
-        status: "returned",
-        returnedAt: new Date()
-      })
-      .where(eq(borrowings.id, borrowingId));
-
-    // Get book info
-    const book = await db.select().from(books).where(eq(books.id, borrowing[0].bookId)).limit(1);
-    
-    if (book.length > 0) {
-      // Update available copies
-      await db.update(books)
-        .set({ 
-          availableCopies: (book[0].availableCopies || 0) + 1,
-          updatedAt: new Date()
-        })
-        .where(eq(books.id, borrowing[0].bookId));
-    }
-
-    return NextResponse.json({ message: "Book returned successfully" });
-
+    // "Not found" covers both a missing loan and one belonging to another user:
+    // telling the caller which would leak the existence of other people's loans.
+    return result.reason === "not_found"
+      ? notFound("Loan")
+      : fail(409, "already_returned", "This book has already been returned.");
   } catch (error) {
-    console.error("Error returning book:", error);
-    return NextResponse.json(
-      { error: "Failed to return book" },
-      { status: 500 }
-    );
+    return serverError("POST /api/return", error);
   }
 }

@@ -8,6 +8,13 @@
       "when": 1759714643550,
       "tag": "0000_famous_sharon_carter",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789792477264,
+      "tag": "0001_invariants_and_indexes",
+      "breakpoints": true
     }
   ]
 }

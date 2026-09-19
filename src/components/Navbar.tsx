@@ -1,162 +1,152 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { useSession, signOut } from "next-auth/react";
-import { BookOpen, User, LogOut, Plus, Settings, Menu, X } from "lucide-react";
-import { useState } from "react";
+import { BookOpen, LogOut, Menu, Plus, Settings, User, X } from "lucide-react";
+import { STAFF_ROLES } from "@/lib/roles";
+
+type NavLink = { href: string; label: string; icon: typeof BookOpen };
 
 export default function Navbar() {
-  const { data: session } = useSession();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { data: session, status } = useSession();
+  const pathname = usePathname();
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Route changes should not leave the mobile menu hanging open.
+  useEffect(() => setMenuOpen(false), [pathname]);
+
+  const isStaff =
+    session?.user?.role !== undefined && STAFF_ROLES.includes(session.user.role);
+
+  const links: NavLink[] = [
+    { href: "/books", label: "Catalogue", icon: BookOpen },
+    ...(session ? [{ href: "/my-books", label: "My loans", icon: User }] : []),
+    ...(isStaff
+      ? [
+          { href: "/books/new", label: "Add book", icon: Plus },
+          { href: "/admin", label: "Admin", icon: Settings },
+        ]
+      : []),
+  ];
+
+  const linkClass = (href: string) =>
+    [
+      "inline-flex items-center gap-2 rounded-[var(--radius-sm)] px-2 py-1.5",
+      "text-[length:var(--text-small)] font-medium transition-colors",
+      pathname === href || pathname.startsWith(`${href}/`)
+        ? "text-[var(--color-ink)]"
+        : "text-[var(--color-ink-subtle)] hover:text-[var(--color-ink)]",
+    ].join(" ");
 
   return (
-    <nav className="bg-black/20 backdrop-blur-xl shadow-2xl border-b border-white/10 sticky top-0 z-50">
-      <div className="container mx-auto px-6 py-4">
-        <div className="flex items-center justify-between">
-          {/* Logo & Navigation */}
-          <div className="flex items-center space-x-12">
-            <Link 
-              href="/" 
-              className="text-3xl font-black bg-gradient-to-r from-white via-purple-200 to-pink-200 bg-clip-text text-transparent hover:scale-105 transition-transform duration-300"
-            >
-              Digital Library
-            </Link>
-            
-            <div className="hidden lg:flex items-center space-x-8">
-              <Link 
-                href="/books" 
-                className="group text-white/80 hover:text-white font-semibold transition-all duration-300 hover:scale-105 flex items-center gap-2"
-              >
-                <BookOpen className="w-4 h-4 group-hover:rotate-12 transition-transform duration-300" />
-                Collection
-              </Link>
-              
-              {session && (
-                <Link 
-                  href="/my-books" 
-                  className="group text-white/80 hover:text-white font-semibold transition-all duration-300 hover:scale-105 flex items-center gap-2"
+    <header className="sticky top-0 z-50 border-b border-[var(--color-edge)] bg-[var(--color-ground-900)]/85 backdrop-blur-md">
+      <nav
+        aria-label="Main"
+        className="mx-auto flex w-full max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:px-6"
+      >
+        <div className="flex items-center gap-8">
+          <Link
+            href="/"
+            className="text-[length:var(--text-lead)] font-semibold tracking-tight text-[var(--color-ink)]"
+          >
+            Stacks
+          </Link>
+
+          <ul className="hidden items-center gap-1 md:flex">
+            {links.map(({ href, label, icon: Icon }) => (
+              <li key={href}>
+                <Link
+                  href={href}
+                  className={linkClass(href)}
+                  aria-current={pathname === href ? "page" : undefined}
                 >
-                  <User className="w-4 h-4 group-hover:rotate-12 transition-transform duration-300" />
-                  My Books
+                  <Icon className="h-4 w-4" aria-hidden="true" />
+                  {label}
                 </Link>
-              )}
-              
-              {session?.user?.role === 'admin' && (
-                <>
-                  <Link 
-                    href="/books/new" 
-                    className="group text-white/80 hover:text-white font-semibold transition-all duration-300 hover:scale-105 flex items-center gap-2"
-                  >
-                    <Plus className="w-4 h-4 group-hover:rotate-12 transition-transform duration-300" />
-                    Add Book
-                  </Link>
-                  <Link 
-                    href="/admin" 
-                    className="group text-white/80 hover:text-white font-semibold transition-all duration-300 hover:scale-105 flex items-center gap-2"
-                  >
-                    <Settings className="w-4 h-4 group-hover:rotate-12 transition-transform duration-300" />
-                    Admin
-                  </Link>
-                </>
-              )}
-            </div>
-          </div>
-          
-          {/* User Section */}
-          <div className="flex items-center space-x-4">
-            {session ? (
-              <>
-                <div className="hidden sm:flex items-center space-x-4">
-                  <div className="w-10 h-10 bg-gradient-to-r from-purple-500 to-pink-500 rounded-full flex items-center justify-center text-white text-sm font-bold shadow-lg">
-                    {session.user?.email?.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="text-white/90 font-medium">
-                    {session.user?.email?.split('@')[0]}
-                  </div>
-                </div>
-                <button 
-                  onClick={() => signOut()}
-                  className="group bg-white/10 hover:bg-red-500/20 text-white px-6 py-3 rounded-xl font-semibold border border-white/20 hover:border-red-500/50 transition-all duration-300 hover:scale-105 flex items-center gap-2"
-                >
-                  <LogOut className="w-4 h-4 group-hover:rotate-12 transition-transform duration-300" />
-                  Sign Out
-                </button>
-              </>
-            ) : (
-              <>
-                <Link 
-                  href="/signin" 
-                  className="text-white/80 hover:text-white font-semibold transition-colors duration-300 hover:scale-105"
-                >
-                  Sign In
-                </Link>
-                <Link 
-                  href="/signup" 
-                  className="bg-gradient-to-r from-purple-600 to-pink-600 text-white px-8 py-3 rounded-xl font-bold shadow-2xl hover:shadow-purple-500/25 transform hover:scale-105 transition-all duration-300"
-                >
-                  Get Started
-                </Link>
-              </>
-            )}
-            
-            {/* Mobile Menu Button */}
-            <button
-              onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-              className="lg:hidden text-white p-2 hover:bg-white/10 rounded-lg transition-colors duration-200"
-            >
-              {isMobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-            </button>
-          </div>
+              </li>
+            ))}
+          </ul>
         </div>
-        
-        {/* Mobile Menu */}
-        {isMobileMenuOpen && (
-          <div className="lg:hidden mt-4 bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10">
-            <div className="flex flex-col space-y-4">
-              <Link 
-                href="/books" 
-                className="text-white/80 hover:text-white font-semibold transition-colors duration-300 flex items-center gap-3"
-                onClick={() => setIsMobileMenuOpen(false)}
+
+        <div className="flex items-center gap-2">
+          {status === "loading" ? (
+            <div className="skeleton h-9 w-28" aria-hidden="true" />
+          ) : session ? (
+            <>
+              <span className="text-subtle hidden text-[length:var(--text-small)] sm:inline">
+                {session.user?.email}
+              </span>
+              <button
+                type="button"
+                onClick={() => signOut({ callbackUrl: "/" })}
+                className="btn btn-ghost"
               >
-                <BookOpen className="w-5 h-5" />
-                Collection
+                <LogOut className="h-4 w-4" aria-hidden="true" />
+                <span className="hidden sm:inline">Sign out</span>
+                <span className="sr-only sm:hidden">Sign out</span>
+              </button>
+            </>
+          ) : (
+            // Below `sm` these two would crowd the menu button, so they move
+            // into the drawer instead.
+            <div className="hidden items-center gap-2 sm:flex">
+              <Link href="/signin" className="btn btn-ghost">
+                Sign in
               </Link>
-              
-              {session && (
-                <Link 
-                  href="/my-books" 
-                  className="text-white/80 hover:text-white font-semibold transition-colors duration-300 flex items-center gap-3"
-                  onClick={() => setIsMobileMenuOpen(false)}
-                >
-                  <User className="w-5 h-5" />
-                  My Books
-                </Link>
-              )}
-              
-              {session?.user?.role === 'admin' && (
-                <>
-                  <Link 
-                    href="/books/new" 
-                    className="text-white/80 hover:text-white font-semibold transition-colors duration-300 flex items-center gap-3"
-                    onClick={() => setIsMobileMenuOpen(false)}
-                  >
-                    <Plus className="w-5 h-5" />
-                    Add Book
-                  </Link>
-                  <Link 
-                    href="/admin" 
-                    className="text-white/80 hover:text-white font-semibold transition-colors duration-300 flex items-center gap-3"
-                    onClick={() => setIsMobileMenuOpen(false)}
-                  >
-                    <Settings className="w-5 h-5" />
-                    Admin
-                  </Link>
-                </>
-              )}
+              <Link href="/signup" className="btn btn-primary">
+                Create account
+              </Link>
             </div>
-          </div>
-        )}
-      </div>
-    </nav>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setMenuOpen((open) => !open)}
+            className="btn btn-ghost md:hidden"
+            aria-expanded={menuOpen}
+            aria-controls="mobile-nav"
+            aria-label={menuOpen ? "Close menu" : "Open menu"}
+          >
+            {menuOpen ? (
+              <X className="h-5 w-5" aria-hidden="true" />
+            ) : (
+              <Menu className="h-5 w-5" aria-hidden="true" />
+            )}
+          </button>
+        </div>
+      </nav>
+
+      {menuOpen && (
+        <div id="mobile-nav" className="border-t border-[var(--color-edge)] md:hidden">
+          <ul className="mx-auto flex w-full max-w-6xl flex-col gap-1 px-4 py-3 sm:px-6">
+            {links.map(({ href, label, icon: Icon }) => (
+              <li key={href}>
+                <Link
+                  href={href}
+                  className={`${linkClass(href)} w-full py-2.5`}
+                  aria-current={pathname === href ? "page" : undefined}
+                >
+                  <Icon className="h-4 w-4" aria-hidden="true" />
+                  {label}
+                </Link>
+              </li>
+            ))}
+
+            {!session && status !== "loading" && (
+              <li className="mt-2 flex flex-col gap-2 border-t border-[var(--color-edge)] pt-3 sm:hidden">
+                <Link href="/signin" className="btn btn-secondary w-full">
+                  Sign in
+                </Link>
+                <Link href="/signup" className="btn btn-primary w-full">
+                  Create account
+                </Link>
+              </li>
+            )}
+          </ul>
+        </div>
+      )}
+    </header>
   );
 }

@@ -1,109 +1,124 @@
+import { Suspense } from "react";
+import { asc } from "drizzle-orm";
 import { db } from "@/db";
-import { books, categories } from "@/db/schema";
-import Link from "next/link";
-import BooksList from "@/components/BooksList";
-import { BookOpen, Plus, Settings, TrendingUp, CheckCircle, BookMarked, Tag } from "lucide-react";
+import { categories } from "@/db/schema";
+import { browseBooks, catalogueStats } from "@/lib/books";
+import { parseBookQuery } from "@/lib/validation";
+import BookSearchForm from "@/components/BookSearchForm";
+import BookCard from "@/components/BookCard";
+import Pagination from "@/components/Pagination";
+import { StatCard } from "@/components/StatCard";
+import { BookListSkeleton, EmptyState, StatSkeleton } from "@/components/States";
 
-// Cache this page for 60 seconds for better performance
-export const revalidate = 60;
+export const metadata = { title: "Catalogue" };
 
-export default async function BooksPage() {
-  const allBooks = await db.select().from(books);
-  const allCategories = await db.select().from(categories);
+// Rendered per request: the page reflects live availability, and the filters
+// live in the query string.
+export const dynamic = "force-dynamic";
+
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+function toParams(raw: Record<string, string | string[] | undefined>) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(raw)) {
+    if (typeof value === "string") params.set(key, value);
+  }
+  return params;
+}
+
+async function Stats() {
+  const stats = await catalogueStats();
+  return (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <StatCard label="Titles" value={stats.totalTitles.toLocaleString()} />
+      <StatCard label="Copies" value={stats.totalCopies.toLocaleString()} />
+      <StatCard label="On loan" value={stats.onLoan.toLocaleString()} />
+      <StatCard
+        label="Titles available"
+        value={stats.availableTitles.toLocaleString()}
+        hint="at least one copy on the shelf"
+      />
+    </div>
+  );
+}
+
+async function Results({ params }: { params: URLSearchParams }) {
+  const query = parseBookQuery(params);
+  const result = await browseBooks(query);
+  const filtered = Boolean(query.search || query.categoryId);
+
+  if (result.books.length === 0) {
+    return filtered ? (
+      <EmptyState
+        title="No books match those filters"
+        body="Try a shorter search term, or clear the category filter."
+        action={{ href: "/books", label: "Clear filters" }}
+      />
+    ) : (
+      <EmptyState
+        title="The catalogue is empty"
+        body="Once books are added they will appear here. Run the seed script to load sample data."
+      />
+    );
+  }
+
+  const first = (query.page - 1) * query.limit + 1;
+  const last = Math.min(query.page * query.limit, result.total);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-hidden">
-      {/* Animated Background Elements */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-10 animate-pulse"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500 rounded-full mix-blend-multiply filter blur-xl opacity-10 animate-pulse"></div>
-      </div>
+    <div className="flex flex-col gap-6">
+      <p className="text-subtle text-[length:var(--text-small)]" aria-live="polite">
+        Showing {first.toLocaleString()}–{last.toLocaleString()} of{" "}
+        {result.total.toLocaleString()} {result.total === 1 ? "book" : "books"}
+        {query.search ? ` matching “${query.search}”` : ""}
+      </p>
 
-      <div className="relative z-10 container mx-auto px-6 py-12">
-        {/* Header Section */}
-        <div className="mb-16">
-          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-8">
-            <div>
-              <h1 className="text-6xl font-black bg-gradient-to-r from-white via-purple-200 to-pink-200 bg-clip-text text-transparent mb-4">
-                Digital Collection
-              </h1>
-              <p className="text-xl text-white/80 font-light">
-                Explore our curated library of knowledge and discovery
-              </p>
-            </div>
-            
-            <div className="flex gap-4">
-              <Link
-                href="/books/new"
-                className="group bg-gradient-to-r from-purple-600 to-pink-600 text-white px-8 py-4 rounded-2xl font-bold shadow-2xl hover:shadow-purple-500/25 transform hover:scale-105 transition-all duration-500 flex items-center gap-3"
-              >
-                <Plus className="w-5 h-5 group-hover:rotate-90 transition-transform duration-300" />
-                Add Book
-              </Link>
-              <Link
-                href="/admin"
-                className="group bg-white/10 backdrop-blur-md border border-white/20 text-white px-8 py-4 rounded-2xl font-bold shadow-2xl hover:shadow-white/10 transform hover:scale-105 transition-all duration-500 flex items-center gap-3"
-              >
-                <Settings className="w-5 h-5 group-hover:rotate-12 transition-transform duration-300" />
-                Admin
-              </Link>
-            </div>
-          </div>
+      <ul className="grid gap-4">
+        {result.books.map((book) => (
+          <BookCard key={book.id} book={book} />
+        ))}
+      </ul>
 
-          {/* Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mt-12">
-            <div className="group bg-white/5 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/10 hover:border-white/20 transition-all duration-500 hover:scale-105">
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 bg-gradient-to-r from-emerald-500 to-teal-500 rounded-2xl flex items-center justify-center text-white text-2xl group-hover:scale-110 transition-transform duration-300">
-                  <BookOpen className="w-8 h-8" />
-                </div>
-                <div>
-                  <p className="text-4xl font-black text-white mb-1">{allBooks.length}</p>
-                  <p className="text-white/70 text-lg font-medium">Total Books</p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="group bg-white/5 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/10 hover:border-white/20 transition-all duration-500 hover:scale-105">
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 bg-gradient-to-r from-green-500 to-emerald-500 rounded-2xl flex items-center justify-center text-white text-2xl group-hover:scale-110 transition-transform duration-300">
-                  <CheckCircle className="w-8 h-8" />
-                </div>
-                <div>
-                  <p className="text-4xl font-black text-white mb-1">{allBooks.filter(b => (b.availableCopies || 0) > 0).length}</p>
-                  <p className="text-white/70 text-lg font-medium">Available</p>
-                </div>
-              </div>
-            </div>
-            
-            <div className="group bg-white/5 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/10 hover:border-white/20 transition-all duration-500 hover:scale-105">
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 bg-gradient-to-r from-red-500 to-pink-500 rounded-2xl flex items-center justify-center text-white text-2xl group-hover:scale-110 transition-transform duration-300">
-                  <BookMarked className="w-8 h-8" />
-                </div>
-                <div>
-                  <p className="text-4xl font-black text-white mb-1">{allBooks.filter(b => (b.availableCopies || 0) === 0).length}</p>
-                  <p className="text-white/70 text-lg font-medium">Borrowed</p>
-                </div>
-              </div>
-            </div>
+      <Pagination
+        page={result.page}
+        totalPages={result.totalPages}
+        params={Object.fromEntries(params.entries())}
+      />
+    </div>
+  );
+}
 
-            <div className="group bg-white/5 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/10 hover:border-white/20 transition-all duration-500 hover:scale-105">
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 bg-gradient-to-r from-purple-500 to-indigo-500 rounded-2xl flex items-center justify-center text-white text-2xl group-hover:scale-110 transition-transform duration-300">
-                  <Tag className="w-8 h-8" />
-                </div>
-                <div>
-                  <p className="text-4xl font-black text-white mb-1">{allCategories.length}</p>
-                  <p className="text-white/70 text-lg font-medium">Categories</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+export default async function BooksPage({ searchParams }: { searchParams: SearchParams }) {
+  const raw = await searchParams;
+  const params = toParams(raw);
 
-        {/* Books List with Search */}
-        <BooksList books={allBooks} categories={allCategories} />
+  const allCategories = await db
+    .select({ id: categories.id, name: categories.name })
+    .from(categories)
+    .orderBy(asc(categories.name));
+
+  return (
+    <div className="page-shell">
+      <div className="page-glow" aria-hidden="true" />
+      <div className="page-body flex flex-col gap-8">
+        <header className="flex flex-col gap-2">
+          <p className="eyebrow">Catalogue</p>
+          <h1 className="heading-1">Browse the collection</h1>
+          <p className="text-lead max-w-2xl">
+            Search by title, author, ISBN or publisher. Availability is live —
+            each figure reflects copies currently on the shelf.
+          </p>
+        </header>
+
+        <Suspense fallback={<StatSkeleton />}>
+          <Stats />
+        </Suspense>
+
+        <BookSearchForm categories={allCategories} />
+
+        <Suspense key={params.toString()} fallback={<BookListSkeleton />}>
+          <Results params={params} />
+        </Suspense>
       </div>
     </div>
   );

@@ -1,218 +1,161 @@
-"use client";
-
-import { useState, useEffect } from "react";
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { and, eq } from "drizzle-orm";
+import { ArrowLeft, Building2, Calendar, Hash, MapPin, Tag, User } from "lucide-react";
 import { db } from "@/db";
 import { books, categories } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { notFound } from "next/navigation";
-import Link from "next/link";
-import { ArrowLeft, BookOpen, Calendar, MapPin, Tag, CheckCircle, XCircle, User, Building } from "lucide-react";
+import { toPositiveInt } from "@/lib/validation";
+import BorrowButton from "@/components/BorrowButton";
 
-interface BookPageProps {
-  params: {
-    id: string;
-  };
+// This was a client component that imported the database module directly, which
+// cannot run in the browser. It is a server component now: one query, no
+// client-side fetch, no loading flash.
+export const dynamic = "force-dynamic";
+
+type Props = { params: Promise<{ id: string }> };
+
+async function loadBook(id: string) {
+  const bookId = toPositiveInt(id);
+  if (bookId === null) return null;
+
+  const rows = await db
+    .select({ book: books, categoryName: categories.name })
+    .from(books)
+    .leftJoin(categories, eq(books.categoryId, categories.id))
+    .where(and(eq(books.id, bookId), eq(books.isActive, true)))
+    .limit(1);
+
+  return rows[0] ?? null;
 }
 
-export default function BookPage({ params }: BookPageProps) {
-  const [bookData, setBookData] = useState<{id: number, title: string, author: string, availableCopies: number | null} | null>(null);
-  const [category, setCategory] = useState<{name: string} | null>(null);
-  const [loading, setLoading] = useState(true);
+export async function generateMetadata({ params }: Props) {
+  const { id } = await params;
+  const row = await loadBook(id);
+  return { title: row ? row.book.title : "Book not found" };
+}
 
-  const bookId = parseInt(params.id);
-  
-  if (isNaN(bookId)) {
-    notFound();
-  }
-
-  useEffect(() => {
-    const fetchBook = async () => {
-      try {
-        const response = await fetch(`/api/books/${bookId}`);
-        if (response.ok) {
-          const data = await response.json();
-          setBookData(data.book);
-          setCategory(data.category);
-        } else {
-          notFound();
-        }
-      } catch (error) {
-        console.error("Error fetching book:", error);
-        notFound();
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchBook();
-  }, [bookId]);
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
-        <div className="text-white text-xl">Loading...</div>
+function Detail({
+  icon: Icon,
+  label,
+  children,
+}: {
+  icon: typeof User;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-start gap-3">
+      <Icon className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-ink-faint)]" aria-hidden="true" />
+      <div className="min-w-0">
+        <dt className="eyebrow">{label}</dt>
+        <dd className="text-[length:var(--text-small)] break-words">{children}</dd>
       </div>
-    );
-  }
+    </div>
+  );
+}
 
-  if (!bookData) {
-    notFound();
-  }
+export default async function BookPage({ params }: Props) {
+  const { id } = await params;
+  const row = await loadBook(id);
 
-  const isAvailable = (bookData.availableCopies || 0) > 0;
+  if (!row) notFound();
+
+  const { book, categoryName } = row;
+  const available = book.availableCopies > 0;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-hidden">
-      {/* Animated Background Elements */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-10 animate-pulse"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500 rounded-full mix-blend-multiply filter blur-xl opacity-10 animate-pulse"></div>
-      </div>
-
-      <div className="relative z-10 container mx-auto px-6 py-12">
-        {/* Back Button */}
-        <Link 
+    <div className="page-shell">
+      <div className="page-glow" aria-hidden="true" />
+      <div className="page-body flex flex-col gap-6">
+        <Link
           href="/books"
-          className="inline-flex items-center gap-2 text-white/80 hover:text-white transition-colors duration-300 mb-8 group"
+          className="text-subtle inline-flex items-center gap-2 text-[length:var(--text-small)] hover:text-[var(--color-ink)]"
         >
-          <ArrowLeft className="w-5 h-5 group-hover:-translate-x-1 transition-transform duration-300" />
-          Back to Collection
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          Back to the catalogue
         </Link>
 
-        {/* Book Details */}
-        <div className="bg-white/5 backdrop-blur-xl rounded-3xl p-12 shadow-2xl border border-white/10">
-          <div className="grid lg:grid-cols-2 gap-12">
-            {/* Book Info */}
-            <div>
-              <div className="flex items-center gap-4 mb-6">
-                <h1 className="text-5xl font-black text-white leading-tight">
-                  {bookData.title}
-                </h1>
-                <span className={`px-4 py-2 rounded-full text-sm font-bold border flex items-center gap-2 ${
-                  isAvailable 
-                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' 
-                    : 'bg-red-500/20 text-red-400 border-red-500/30'
-                }`}>
-                  {isAvailable ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
-                  {isAvailable ? 'Available' : 'Borrowed'}
-                </span>
-              </div>
+        <article className="card flex flex-col gap-8 lg:flex-row lg:items-start">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-start gap-3">
+              <h1 className="heading-1 min-w-0 break-words">{book.title}</h1>
+              <span className={available ? "chip chip-ok" : "chip chip-danger"}>
+                {available ? "Available" : "All copies on loan"}
+              </span>
+            </div>
 
-              <div className="space-y-6 mb-8">
-                <div className="flex items-center gap-4 text-white/80 text-xl">
-                  <User className="w-6 h-6 text-purple-400" />
-                  <span className="font-semibold">Author:</span> {bookData.author}
-                </div>
-                
-                {bookData.publisher && (
-                  <div className="flex items-center gap-4 text-white/70 text-lg">
-                    <Building className="w-6 h-6 text-blue-400" />
-                    <span className="font-semibold">Publisher:</span> {bookData.publisher}
-                    {bookData.publicationYear && ` (${bookData.publicationYear})`}
-                  </div>
-                )}
-                
-                {bookData.isbn && (
-                  <div className="flex items-center gap-4 text-white/70 text-lg">
-                    <BookOpen className="w-6 h-6 text-green-400" />
-                    <span className="font-semibold">ISBN:</span> {bookData.isbn}
-                  </div>
-                )}
-                
-                <div className="flex items-center gap-4 text-white/70 text-lg">
-                  <Tag className="w-6 h-6 text-purple-400" />
-                  <span className="font-semibold">Category:</span> {category?.[0]?.name || 'Uncategorized'}
-                </div>
-                
-                <div className="flex items-center gap-4 text-white/70 text-lg">
-                  <CheckCircle className="w-6 h-6 text-emerald-400" />
-                  <span className="font-semibold">Copies:</span> {bookData.availableCopies || 0} of {bookData.totalCopies || 0} available
-                </div>
-                
-                {bookData.location && (
-                  <div className="flex items-center gap-4 text-white/70 text-lg">
-                    <MapPin className="w-6 h-6 text-orange-400" />
-                    <span className="font-semibold">Location:</span> {bookData.location}
-                  </div>
-                )}
-              </div>
-
-              {bookData.description && (
-                <div className="mb-8">
-                  <h3 className="text-2xl font-bold text-white mb-4">Description</h3>
-                  <p className="text-white/70 text-lg leading-relaxed">
-                    {bookData.description}
-                  </p>
-                </div>
+            <dl className="mt-6 grid gap-4 sm:grid-cols-2">
+              <Detail icon={User} label="Author">
+                {book.author}
+              </Detail>
+              <Detail icon={Tag} label="Category">
+                {categoryName ?? "Uncategorised"}
+              </Detail>
+              {book.publisher && (
+                <Detail icon={Building2} label="Publisher">
+                  {book.publisher}
+                  {book.publicationYear ? ` (${book.publicationYear})` : ""}
+                </Detail>
               )}
+              {book.isbn && (
+                <Detail icon={Hash} label="ISBN">
+                  <span className="font-mono">{book.isbn}</span>
+                </Detail>
+              )}
+              {book.location && (
+                <Detail icon={MapPin} label="Shelf">
+                  {book.location}
+                </Detail>
+              )}
+              {book.createdAt && (
+                <Detail icon={Calendar} label="Added">
+                  <time dateTime={book.createdAt.toISOString()}>
+                    {book.createdAt.toLocaleDateString("en-GB", {
+                      year: "numeric",
+                      month: "long",
+                      day: "numeric",
+                    })}
+                  </time>
+                </Detail>
+              )}
+            </dl>
 
-              <div className="flex items-center gap-8 text-white/60 text-sm">
-                <div className="flex items-center gap-2">
-                  <div className="w-2 h-2 bg-purple-400 rounded-full"></div>
-                  Book #{bookData.id}
-                </div>
-                <div className="flex items-center gap-2">
-                  <Calendar className="w-4 h-4" />
-                  Added {new Date(bookData.createdAt!).toLocaleDateString('en-US', { 
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric' 
-                  })}
-                </div>
+            {book.description && (
+              <div className="mt-8">
+                <h2 className="heading-3">Description</h2>
+                <p className="text-muted mt-2 max-w-prose">{book.description}</p>
               </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex flex-col justify-center">
-              <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-8 border border-white/10">
-                <h3 className="text-2xl font-bold text-white mb-6">Actions</h3>
-                
-                <div className="space-y-4">
-                  {isAvailable ? (
-                    <button 
-                      onClick={async () => {
-                        try {
-                          const response = await fetch("/api/borrow", {
-                            method: "POST",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ bookId: bookData.id })
-                          });
-
-                          if (response.ok) {
-                            alert("Book borrowed successfully! Check 'My Books' to see it.");
-                            // Refresh the page to update availability
-                            window.location.reload();
-                          } else {
-                            const error = await response.json();
-                            alert(`Failed to borrow book: ${error.error}`);
-                          }
-                        } catch (error) {
-                          console.error("Error borrowing book:", error);
-                          alert("Failed to borrow book. Please try again.");
-                        }
-                      }}
-                      className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white px-8 py-4 rounded-xl font-bold text-lg shadow-2xl hover:shadow-emerald-500/25 transform hover:scale-105 transition-all duration-300"
-                    >
-                      Borrow This Book
-                    </button>
-                  ) : (
-                    <button className="w-full bg-gradient-to-r from-red-500 to-pink-500 text-white px-8 py-4 rounded-xl font-bold text-lg shadow-2xl hover:shadow-red-500/25 transform hover:scale-105 transition-all duration-300">
-                      Book Currently Borrowed
-                    </button>
-                  )}
-                  
-                  <button className="w-full bg-white/10 hover:bg-white/20 text-white px-8 py-4 rounded-xl font-bold text-lg border border-white/20 hover:border-white/30 transition-all duration-300">
-                    Add to Wishlist
-                  </button>
-                  
-                  <button className="w-full bg-white/10 hover:bg-white/20 text-white px-8 py-4 rounded-xl font-bold text-lg border border-white/20 hover:border-white/30 transition-all duration-300">
-                    Share Book
-                  </button>
-                </div>
-              </div>
-            </div>
+            )}
           </div>
-        </div>
+
+          <aside className="w-full shrink-0 lg:w-72">
+            <div className="card card-tight bg-[var(--color-surface-2)]">
+              <p className="eyebrow">Availability</p>
+              <p className="mt-1 text-[length:var(--text-h2)] font-semibold tabular-nums">
+                {book.availableCopies}
+                <span className="text-subtle text-[length:var(--text-body)] font-normal">
+                  {" "}
+                  / {book.totalCopies}
+                </span>
+              </p>
+              <p className="text-subtle mt-0.5 text-[length:var(--text-micro)]">
+                copies on the shelf
+              </p>
+
+              <div className="mt-4">
+                <BorrowButton
+                  bookId={book.id}
+                  available={available}
+                  className="btn btn-primary w-full"
+                />
+              </div>
+
+              <p className="text-subtle mt-3 text-[length:var(--text-micro)]">
+                Loans run for 14 days. You can hold one copy of a title at a time.
+              </p>
+            </div>
+          </aside>
+        </article>
       </div>
     </div>
   );

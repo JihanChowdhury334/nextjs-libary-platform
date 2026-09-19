@@ -1,222 +1,207 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSession } from "next-auth/react";
 import { useRouter } from "next/navigation";
-import { BookOpen, Calendar, Clock, CheckCircle, AlertCircle, RotateCcw } from "lucide-react";
+import Link from "next/link";
+import { BookOpen, Loader2, RotateCcw } from "lucide-react";
+import { apiFetch, postJson } from "@/lib/client";
+import { BookListSkeleton, EmptyState, ErrorState } from "@/components/States";
+import { StatCard } from "@/components/StatCard";
 
-interface BorrowedBook {
+type Loan = {
   id: number;
   bookId: number;
-  borrowedAt: string;
+  borrowedAt: string | null;
   dueDate: string;
   returnedAt: string | null;
   status: string;
   bookTitle: string;
   bookAuthor: string;
   categoryName: string | null;
+};
+
+const DAY = 24 * 60 * 60 * 1000;
+
+function daysUntil(dueDate: string): number {
+  const due = new Date(`${dueDate}T00:00:00Z`).getTime();
+  const today = new Date().setUTCHours(0, 0, 0, 0);
+  return Math.round((due - today) / DAY);
+}
+
+function formatDate(value: string | null): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleDateString("en-GB", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+  });
 }
 
 export default function MyBooksPage() {
-  const { data: session, status } = useSession();
+  const { status } = useSession();
   const router = useRouter();
-  const [borrowedBooks, setBorrowedBooks] = useState<BorrowedBook[]>([]);
-  const [loading, setLoading] = useState(true);
+
+  const [loans, setLoans] = useState<Loan[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [returning, setReturning] = useState<number | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setLoadError(null);
+    const result = await apiFetch<{ loans: Loan[] }>("/api/my-books");
+    if (result.ok) setLoans(result.data.loans);
+    else {
+      setLoans([]);
+      setLoadError(result.message);
+    }
+  }, []);
 
   useEffect(() => {
-    if (status === "unauthenticated") {
-      router.push("/signin");
-      return;
+    if (status === "unauthenticated") router.replace("/signin?callbackUrl=/my-books");
+    if (status === "authenticated") void load();
+  }, [status, router, load]);
+
+  async function handleReturn(loanId: number) {
+    setReturning(loanId);
+    setActionError(null);
+
+    const result = await postJson("/api/return", { borrowingId: loanId });
+    setReturning(null);
+
+    // A duplicate return is not an error worth alarming the user about — the
+    // book is returned either way. Re-sync and move on.
+    if (!result.ok && result.code !== "already_returned") {
+      setActionError(result.message);
     }
-
-    if (status === "authenticated") {
-      fetchMyBooks();
-    }
-  }, [status, router]);
-
-  const fetchMyBooks = async () => {
-    try {
-      const response = await fetch("/api/my-books");
-      if (response.ok) {
-        const data = await response.json();
-        setBorrowedBooks(data);
-      }
-    } catch (error) {
-      console.error("Error fetching books:", error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleReturn = async (borrowingId: number) => {
-    try {
-      const response = await fetch("/api/return", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ borrowingId })
-      });
-
-      if (response.ok) {
-        // Refresh the list
-        fetchMyBooks();
-      } else {
-        const error = await response.json();
-        alert(`Failed to return book: ${error.error}`);
-      }
-    } catch (error) {
-      console.error("Error returning book:", error);
-      alert("Failed to return book");
-    }
-  };
-
-  if (status === "loading" || loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 flex items-center justify-center">
-        <div className="text-white text-xl">Loading...</div>
-      </div>
-    );
+    await load();
   }
 
+  const active = loans?.filter((l) => l.status === "borrowed") ?? [];
+  const overdue = active.filter((l) => daysUntil(l.dueDate) < 0);
+  const returned = loans?.filter((l) => l.status === "returned") ?? [];
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-purple-900 to-slate-900 relative overflow-hidden">
-      {/* Animated Background Elements */}
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-purple-500 rounded-full mix-blend-multiply filter blur-xl opacity-10 animate-pulse"></div>
-        <div className="absolute -bottom-40 -left-40 w-80 h-80 bg-blue-500 rounded-full mix-blend-multiply filter blur-xl opacity-10 animate-pulse"></div>
-      </div>
+    <div className="page-shell">
+      <div className="page-glow" aria-hidden="true" />
+      <div className="page-body flex flex-col gap-8">
+        <header className="flex flex-col gap-2">
+          <p className="eyebrow">Account</p>
+          <h1 className="heading-1">My loans</h1>
+          <p className="text-lead">Books you have out, and everything you have returned.</p>
+        </header>
 
-      <div className="relative z-10 container mx-auto px-6 py-12">
-        {/* Header */}
-        <div className="mb-12">
-          <h1 className="text-6xl font-black bg-gradient-to-r from-white via-purple-200 to-pink-200 bg-clip-text text-transparent mb-4">
-            My Books
-          </h1>
-          <p className="text-xl text-white/80 font-light">
-            Manage your borrowed books and track due dates
-          </p>
-        </div>
-
-        {/* Stats Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-8 mb-12">
-          <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-8 border border-white/10">
-            <div className="flex items-center gap-4">
-              <div className="p-4 bg-blue-500/20 rounded-xl">
-                <BookOpen className="w-8 h-8 text-blue-400" />
-              </div>
-              <div>
-                <p className="text-3xl font-bold text-white">{borrowedBooks.length}</p>
-                <p className="text-white/60">Total Borrowed</p>
-              </div>
+        {status === "loading" || loans === null ? (
+          <BookListSkeleton rows={3} />
+        ) : loadError ? (
+          <ErrorState body={loadError} onRetry={() => void load()} />
+        ) : loans.length === 0 ? (
+          <EmptyState
+            icon={<BookOpen className="h-6 w-6" aria-hidden="true" />}
+            title="No loans yet"
+            body="Books you borrow will show up here with their due dates."
+            action={{ href: "/books", label: "Browse the catalogue" }}
+          />
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <StatCard label="On loan" value={active.length} />
+              <StatCard label="Overdue" value={overdue.length} />
+              <StatCard label="Returned" value={returned.length} />
+              <StatCard label="Total" value={loans.length} />
             </div>
-          </div>
 
-          <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-8 border border-white/10">
-            <div className="flex items-center gap-4">
-              <div className="p-4 bg-emerald-500/20 rounded-xl">
-                <CheckCircle className="w-8 h-8 text-emerald-400" />
-              </div>
-              <div>
-                <p className="text-3xl font-bold text-white">
-                  {borrowedBooks.filter(book => book.status === 'borrowed').length}
-                </p>
-                <p className="text-white/60">Currently Borrowed</p>
-              </div>
-            </div>
-          </div>
+            {actionError && (
+              <p role="alert" className="field-error">
+                {actionError}
+              </p>
+            )}
 
-          <div className="bg-white/5 backdrop-blur-xl rounded-2xl p-8 border border-white/10">
-            <div className="flex items-center gap-4">
-              <div className="p-4 bg-red-500/20 rounded-xl">
-                <AlertCircle className="w-8 h-8 text-red-400" />
-              </div>
-              <div>
-                <p className="text-3xl font-bold text-white">
-                  {borrowedBooks.filter(book => {
-                    if (book.status !== 'borrowed') return false;
-                    return new Date(book.dueDate) < new Date();
-                  }).length}
-                </p>
-                <p className="text-white/60">Overdue Books</p>
-              </div>
-            </div>
-          </div>
-        </div>
+            <ul className="grid gap-4">
+              {loans.map((loan) => {
+                const isActive = loan.status === "borrowed";
+                const days = daysUntil(loan.dueDate);
+                const isOverdue = isActive && days < 0;
+                const dueSoon = isActive && days >= 0 && days <= 3;
 
-        {/* Books List */}
-        <div className="bg-white/5 backdrop-blur-xl rounded-3xl p-8 shadow-2xl border border-white/10">
-          <h2 className="text-3xl font-bold text-white mb-8">My Books</h2>
-          
-          {borrowedBooks.length === 0 ? (
-            <div className="text-center py-16">
-              <BookOpen className="w-24 h-24 text-white/20 mx-auto mb-6" />
-              <h3 className="text-2xl font-bold text-white/60 mb-4">No Books Borrowed</h3>
-              <p className="text-white/40 text-lg">Start exploring our collection to borrow books!</p>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {borrowedBooks.map((book) => {
-                const isOverdue = book.status === 'borrowed' && new Date(book.dueDate) < new Date();
-                const isReturned = book.status === 'returned';
-                
                 return (
-                  <div key={book.id} className="bg-white/5 backdrop-blur-xl rounded-2xl p-6 border border-white/10 hover:bg-white/10 transition-all duration-300">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <h3 className="text-2xl font-bold text-white mb-2">{book.bookTitle}</h3>
-                        <p className="text-white/70 text-lg mb-2">by {book.bookAuthor}</p>
-                        {book.categoryName && (
-                          <p className="text-white/50 text-sm mb-4">Category: {book.categoryName}</p>
-                        )}
-                        
-                        <div className="flex items-center gap-8 text-white/60">
-                          <div className="flex items-center gap-2">
-                            <Calendar className="w-5 h-5" />
-                            <span>Borrowed: {new Date(book.borrowedAt).toLocaleDateString()}</span>
+                  <li key={loan.id} className="card">
+                    <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <h2 className="heading-3 min-w-0 break-words">
+                            <Link
+                              href={`/books/${loan.bookId}`}
+                              className="hover:text-[var(--color-accent-soft)]"
+                            >
+                              {loan.bookTitle}
+                            </Link>
+                          </h2>
+                          <span
+                            className={
+                              !isActive
+                                ? "chip chip-neutral"
+                                : isOverdue
+                                  ? "chip chip-danger"
+                                  : dueSoon
+                                    ? "chip chip-warn"
+                                    : "chip chip-ok"
+                            }
+                          >
+                            {!isActive
+                              ? "Returned"
+                              : isOverdue
+                                ? `${Math.abs(days)} ${Math.abs(days) === 1 ? "day" : "days"} overdue`
+                                : `Due in ${days} ${days === 1 ? "day" : "days"}`}
+                          </span>
+                        </div>
+
+                        <p className="text-muted mt-1 text-[length:var(--text-small)]">
+                          {loan.bookAuthor}
+                          {loan.categoryName ? ` · ${loan.categoryName}` : ""}
+                        </p>
+
+                        <dl className="text-subtle mt-3 flex flex-wrap gap-x-6 gap-y-1 text-[length:var(--text-micro)]">
+                          <div className="flex gap-1.5">
+                            <dt>Borrowed</dt>
+                            <dd>{formatDate(loan.borrowedAt)}</dd>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <Clock className="w-5 h-5" />
-                            <span>Due: {new Date(book.dueDate).toLocaleDateString()}</span>
+                          <div className="flex gap-1.5">
+                            <dt>Due</dt>
+                            <dd>{formatDate(loan.dueDate)}</dd>
                           </div>
-                          {isReturned && book.returnedAt && (
-                            <div className="flex items-center gap-2">
-                              <CheckCircle className="w-5 h-5" />
-                              <span>Returned: {new Date(book.returnedAt).toLocaleDateString()}</span>
+                          {loan.returnedAt && (
+                            <div className="flex gap-1.5">
+                              <dt>Returned</dt>
+                              <dd>{formatDate(loan.returnedAt)}</dd>
                             </div>
                           )}
-                        </div>
+                        </dl>
                       </div>
-                      
-                      <div className="flex items-center gap-4">
-                        <span className={`px-4 py-2 rounded-full text-sm font-bold border flex items-center gap-2 ${
-                          isReturned
-                            ? 'bg-gray-500/20 text-gray-400 border-gray-500/30'
-                            : isOverdue
-                            ? 'bg-red-500/20 text-red-400 border-red-500/30'
-                            : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                        }`}>
-                          {isReturned ? <CheckCircle className="w-4 h-4" /> : 
-                           isOverdue ? <AlertCircle className="w-4 h-4" /> : 
-                           <CheckCircle className="w-4 h-4" />}
-                          {isReturned ? 'Returned' : isOverdue ? 'Overdue' : 'On Time'}
-                        </span>
-                        
-                        {!isReturned && (
-                          <button 
-                            onClick={() => handleReturn(book.id)}
-                            className="px-6 py-3 bg-gradient-to-r from-purple-600 to-pink-600 text-white font-bold rounded-xl shadow-lg hover:shadow-purple-500/25 transform hover:scale-105 transition-all duration-300 flex items-center gap-2"
-                          >
-                            <RotateCcw className="w-4 h-4" />
-                            Return Book
-                          </button>
-                        )}
-                      </div>
+
+                      {isActive && (
+                        <button
+                          type="button"
+                          onClick={() => void handleReturn(loan.id)}
+                          disabled={returning === loan.id}
+                          className="btn btn-secondary shrink-0"
+                        >
+                          {returning === loan.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                          ) : (
+                            <RotateCcw className="h-4 w-4" aria-hidden="true" />
+                          )}
+                          {returning === loan.id ? "Returning…" : "Return"}
+                          <span className="sr-only"> {loan.bookTitle}</span>
+                        </button>
+                      )}
                     </div>
-                  </div>
+                  </li>
                 );
               })}
-            </div>
-          )}
-        </div>
+            </ul>
+          </>
+        )}
       </div>
     </div>
   );

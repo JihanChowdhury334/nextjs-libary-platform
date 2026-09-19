@@ -1,16 +1,16 @@
-import { NextResponse } from "next/server";
+import { asc } from "drizzle-orm";
 import { db } from "@/db";
 import { categories } from "@/db/schema";
+import { ok, serverError } from "@/lib/api";
 
 export async function GET() {
   try {
-    const allCategories = await db.select().from(categories);
-    return NextResponse.json(allCategories);
+    const rows = await db
+      .select({ id: categories.id, name: categories.name, description: categories.description })
+      .from(categories)
+      .orderBy(asc(categories.name));
+    return ok({ categories: rows });
   } catch (error) {
-    console.error("Error fetching categories:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch categories" },
-      { status: 500 }
-    );
+    return serverError("GET /api/categories", error);
   }
 }
